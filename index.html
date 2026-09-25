@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sensor Telemetry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root {
+  --bg: #0B0F14; --panel: #121820; --border: #212A35;
+  --text: #D7DEE6; --muted: #7C8896; --good: #57D9C4; --bad: #E17A7A;
+  --temperature: #E8A855; --humidity: #57D9C4; --distance: #9C8CF0;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: "Space Grotesk", sans-serif;
+  background-image: linear-gradient(rgba(255,255,255,.02) 1px, transparent 1px),
+                     linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);
+  background-size: 32px 32px;
+  min-height: 100%;
+}
+.topbar { display:flex; justify-content:space-between; align-items:center; padding:24px clamp(16px,4vw,40px); border-bottom:1px solid var(--border); flex-wrap:wrap; gap:8px; }
+.brand { display:flex; align-items:center; gap:12px; }
+.brand h1 { font-size:20px; font-weight:500; margin:0; }
+.pulse { width:9px; height:9px; border-radius:50%; background:var(--good); animation:pulse 2s infinite; }
+@keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(87,217,196,.5);} 70%{box-shadow:0 0 0 8px rgba(87,217,196,0);} 100%{box-shadow:0 0 0 0 rgba(87,217,196,0);} }
+.meta { font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--muted); display:flex; align-items:center; gap:16px; }
+.meta button { background:none; border:1px solid var(--border); color:var(--muted); font-family:"IBM Plex Mono",monospace; font-size:12px; padding:6px 12px; cursor:pointer; }
+.meta button:hover { color:var(--text); border-color:var(--muted); }
+main { max-width:1080px; margin:0 auto; padding:clamp(16px,4vw,40px); }
+.panels { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:20px; margin-bottom:48px; }
+.card { background:var(--panel); border:1px solid var(--border); padding:24px; min-width:0; }
+.card .label { font-size:13px; color:var(--muted); margin-bottom:12px; }
+.card .value { font-family:"IBM Plex Mono",monospace; font-size:clamp(28px,5vw,40px); font-weight:500; }
+.card .value .unit { font-size:18px; color:var(--muted); margin-left:6px; }
+.card canvas { margin-top:16px; height:60px !important; max-width:100%; }
+.stats-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:16px; flex-wrap:wrap; gap:8px; }
+.stats h2 { font-size:15px; font-weight:500; color:var(--muted); margin:0; }
+.range-toggle button { background:none; border:1px solid var(--border); color:var(--muted); font-family:"IBM Plex Mono",monospace; font-size:12px; padding:6px 12px; cursor:pointer; }
+.range-toggle button + button { border-left:none; }
+.range-toggle button.active { color:var(--bg); background:var(--good); border-color:var(--good); }
+.table-wrap { overflow-x:auto; }
+table { width:100%; border-collapse:collapse; font-family:"IBM Plex Mono",monospace; font-size:14px; }
+th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+th { color:var(--muted); font-weight:400; font-size:12px; }
+.note { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); margin-top:24px; }
+
+/* auth screen */
+.auth-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+.auth-card { background:var(--panel); border:1px solid var(--border); padding:32px; width:100%; max-width:360px; }
+.auth-card h1 { font-size:18px; font-weight:500; margin:0 0 4px; }
+.auth-card p.sub { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); margin:0 0 24px; }
+.field { margin-bottom:14px; }
+.field label { display:block; font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); margin-bottom:6px; }
+.field input {
+  width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text);
+  font-family:"IBM Plex Mono",monospace; font-size:14px; padding:10px 12px;
+}
+.field input:focus { outline:1px solid var(--good); border-color:var(--good); }
+.auth-actions { display:flex; gap:10px; margin-top:20px; }
+.btn { flex:1; border:1px solid var(--border); background:none; color:var(--text); font-family:"Space Grotesk"; font-size:14px; padding:10px; cursor:pointer; }
+.btn.primary { background:var(--good); color:var(--bg); border-color:var(--good); font-weight:500; }
+.btn:hover { border-color:var(--muted); }
+.auth-error { color:var(--bad); font-family:"IBM Plex Mono",monospace; font-size:12px; margin-top:12px; min-height:14px; }
+.hidden { display:none !important; }
+.config-warning { max-width:520px; margin:80px auto; padding:24px; border:1px solid var(--bad); font-family:"IBM Plex Mono",monospace; font-size:13px; line-height:1.6; }
+</style>
+</head>
+<body>
+
+<!-- Shown only if SUPABASE_URL / SUPABASE_ANON_KEY below haven't been filled in -->
+<div id="configWarning" class="config-warning hidden">
+  Supabase isn't configured yet. Open <code>index.html</code>, find the
+  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> constants near
+  the top of the script, and paste in the values from your Supabase project's
+  Settings &rarr; API page. Then redeploy.
+</div>
+
+<!-- Auth screen -->
+<div id="authWrap" class="auth-wrap hidden">
+  <div class="auth-card">
+    <h1>Sensor Telemetry</h1>
+    <p class="sub">sign in to view your dashboard</p>
+    <div class="field">
+      <label for="email">email</label>
+      <input type="email" id="email" autocomplete="email">
+    </div>
+    <div class="field">
+      <label for="password">password</label>
+      <input type="password" id="password" autocomplete="current-password">
+    </div>
+    <div class="auth-actions">
+      <button class="btn" id="signUpBtn">sign up</button>
+      <button class="btn primary" id="signInBtn">sign in</button>
+    </div>
+    <div class="auth-error" id="authError"></div>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div id="dashboardWrap" class="hidden">
+  <header class="topbar">
+    <div class="brand"><span class="pulse"></span><h1>Sensor Telemetry</h1></div>
+    <div class="meta">
+      <span>last reading <span id="lastUpdated">--</span></span>
+      <button id="signOutBtn">sign out</button>
+    </div>
+  </header>
+  <main>
+    <section class="panels" id="panels"></section>
+    <section class="stats">
+      <div class="stats-header">
+        <h2>Query window</h2>
+        <div class="range-toggle" id="rangeToggle">
+          <button data-min="15" class="active">15m</button>
+          <button data-min="60">1h</button>
+          <button data-min="1440">24h</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>sensor</th><th>min</th><th>max</th><th>avg</th><th>samples</th></tr></thead>
+          <tbody id="statsBody"></tbody>
+        </table>
+      </div>
+      <p class="note">Readings are simulated in your browser and stored in your own Supabase database, scoped to your account via row-level security.</p>
+    </section>
+  </main>
+</div>
+
+<script>
+// ====================== CONFIG ======================
+// Fill these in from your Supabase project: Settings -> API
+const SUPABASE_URL = "YOUR_SUPABASE_PROJECT_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+// =====================================================
+
+const SENSORS = {
+  temperature: { unit: "C", start: 28, drift: 0.3, min: 15, max: 42, label: "temperature" },
+  humidity:    { unit: "%", start: 55, drift: 1.5, min: 20, max: 90, label: "humidity" },
+  distance:    { unit: "cm", start: 60, drift: 8,  min: 2,  max: 300, label: "distance (ultrasonic)" },
+};
+
+if (!SUPABASE_URL.startsWith("http") || SUPABASE_ANON_KEY === "YOUR_SUPABASE_ANON_KEY") {
+  document.getElementById("configWarning").classList.remove("hidden");
+} else {
+  runApp();
+}
+
+function runApp() {
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const authWrap = document.getElementById("authWrap");
+  const dashboardWrap = document.getElementById("dashboardWrap");
+  const authError = document.getElementById("authError");
+
+  document.getElementById("signInBtn").addEventListener("click", async () => {
+    authError.textContent = "";
+    const { error } = await supabase.auth.signInWithPassword({
+      email: document.getElementById("email").value,
+      password: document.getElementById("password").value,
+    });
+    if (error) authError.textContent = error.message;
+  });
+
+  document.getElementById("signUpBtn").addEventListener("click", async () => {
+    authError.textContent = "";
+    const { error } = await supabase.auth.signUp({
+      email: document.getElementById("email").value,
+      password: document.getElementById("password").value,
+    });
+    if (error) authError.textContent = error.message;
+    else authError.textContent = "check your email to confirm, then sign in.";
+  });
+
+  document.getElementById("signOutBtn").addEventListener("click", async () => {
+    await supabase.auth.signOut();
+  });
+
+  let tickTimer = null;
+  let statsTimer = null;
+  const state = {};
+  const charts = {};
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    if (session) {
+      authWrap.classList.add("hidden");
+      dashboardWrap.classList.remove("hidden");
+      startDashboard(supabase);
+    } else {
+      dashboardWrap.classList.add("hidden");
+      authWrap.classList.remove("hidden");
+      if (tickTimer) clearInterval(tickTimer);
+      if (statsTimer) clearInterval(statsTimer);
+    }
+  });
+
+  function nextValue(type) {
+    const cfg = SENSORS[type];
+    if (!(type in state)) state[type] = cfg.start;
+    const step = (Math.random() * 2 - 1) * cfg.drift;
+    state[type] = Math.max(cfg.min, Math.min(cfg.max, state[type] + step));
+    return Math.round(state[type] * 100) / 100;
+  }
+
+  function ensurePanel(type) {
+    if (document.getElementById(`card-${type}`)) return;
+    const cfg = SENSORS[type];
+    const div = document.createElement("div");
+    div.className = "card";
+    div.id = `card-${type}`;
+    div.innerHTML = `<div class="label">${cfg.label}</div>
+      <div class="value"><span id="val-${type}">--</span><span class="unit">${cfg.unit}</span></div>
+      <canvas id="chart-${type}"></canvas>`;
+    document.getElementById("panels").appendChild(div);
+    const ctx = document.getElementById(`chart-${type}`).getContext("2d");
+    const color = getComputedStyle(document.documentElement).getPropertyValue(`--${type}`).trim() || "#57D9C4";
+    charts[type] = new Chart(ctx, {
+      type: "line",
+      data: { labels: [], datasets: [{ data: [], borderColor: color, borderWidth: 2, pointRadius: 0, tension: 0.35 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { display: false } } },
+    });
+  }
+
+  function currentRangeMinutes() {
+    const active = document.querySelector(".range-toggle button.active");
+    return active ? parseInt(active.dataset.min, 10) : 15;
+  }
+
+  async function insertTick(supabase) {
+    const rows = Object.keys(SENSORS).map(type => ({
+      sensor_type: type,
+      value: nextValue(type),
+      unit: SENSORS[type].unit,
+    }));
+    const { error } = await supabase.from("readings").insert(rows);
+    if (error) console.error("insert failed:", error.message);
+  }
+
+  async function refreshLatest(supabase) {
+    for (const type of Object.keys(SENSORS)) {
+      ensurePanel(type);
+      const { data, error } = await supabase
+        .from("readings")
+        .select("value, created_at")
+        .eq("sensor_type", type)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (error) { console.error(error.message); continue; }
+      if (data && data[0]) {
+        document.getElementById(`val-${type}`).textContent = data[0].value;
+        document.getElementById("lastUpdated").textContent = new Date(data[0].created_at).toLocaleTimeString();
+      }
+    }
+  }
+
+  async function refreshHistoryAndStats(supabase) {
+    const windowMin = currentRangeMinutes();
+    const cutoff = new Date(Date.now() - windowMin * 60 * 1000).toISOString();
+    const rowsHtml = [];
+
+    for (const type of Object.keys(SENSORS)) {
+      const cfg = SENSORS[type];
+      const { data, error } = await supabase
+        .from("readings")
+        .select("value, created_at")
+        .eq("sensor_type", type)
+        .gte("created_at", cutoff)
+        .order("created_at", { ascending: true });
+
+      if (error) { console.error(error.message); continue; }
+
+      const chart = charts[type];
+      if (chart) {
+        chart.data.labels = data.map(p => new Date(p.created_at).toLocaleTimeString());
+        chart.data.datasets[0].data = data.map(p => p.value);
+        chart.update("none");
+      }
+
+      if (!data.length) {
+        rowsHtml.push(`<tr><td>${cfg.label}</td><td colspan="4">no data yet</td></tr>`);
+        continue;
+      }
+      const vals = data.map(p => p.value);
+      const min = Math.min(...vals).toFixed(2);
+      const max = Math.max(...vals).toFixed(2);
+      const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2);
+      rowsHtml.push(`<tr><td>${cfg.label}</td><td>${min} ${cfg.unit}</td><td>${max} ${cfg.unit}</td><td>${avg} ${cfg.unit}</td><td>${vals.length}</td></tr>`);
+    }
+    document.getElementById("statsBody").innerHTML = rowsHtml.join("");
+  }
+
+  function startDashboard(supabase) {
+    document.getElementById("rangeToggle").addEventListener("click", e => {
+      if (e.target.tagName !== "BUTTON") return;
+      document.querySelectorAll(".range-toggle button").forEach(b => b.classList.remove("active"));
+      e.target.classList.add("active");
+      refreshHistoryAndStats(supabase);
+    });
+
+    insertTick(supabase).then(() => {
+      refreshLatest(supabase);
+      refreshHistoryAndStats(supabase);
+    });
+
+    tickTimer = setInterval(async () => {
+      await insertTick(supabase);
+      refreshLatest(supabase);
+    }, 3000);
+
+    statsTimer = setInterval(() => refreshHistoryAndStats(supabase), 10000);
+  }
+}
+</script>
+</body>
+</html>
